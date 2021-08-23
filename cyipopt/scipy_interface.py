@@ -75,6 +75,7 @@ class IpoptProblemWrapper(object):
                  hessp=None,
                  constraints=(),
                  eps=1e-8,
+                 n=None,
                  con_dims=()):
         if not SCIPY_INSTALLED:
             msg = 'Install SciPy to use the `IpoptProblemWrapper` class.'
@@ -100,6 +101,7 @@ class IpoptProblemWrapper(object):
         self.kwargs = kwargs or {}
         self._constraint_funs = []
         self._constraint_jacs = []
+        self._constraint_jac_structure = []
         self._constraint_hessians = []
         self._constraint_dims = np.asarray(con_dims)
         self._constraint_args = []
@@ -109,6 +111,7 @@ class IpoptProblemWrapper(object):
         for con in constraints:
             con_fun = con['fun']
             con_jac = con.get('jac', None)
+            con_jac_structure = con.get('jacobian_structure', None)
             con_args = con.get('args', [])
             con_hessian = con.get('hess', None)
             con_kwargs = con.get('kwargs', {})
@@ -127,6 +130,7 @@ class IpoptProblemWrapper(object):
                 raise NotImplementedError(msg)
             self._constraint_funs.append(con_fun)
             self._constraint_jacs.append(con_jac)
+            self._constraint_jac_structure.append(con_jac_structure)
             self._constraint_hessians.append(con_hessian)
             self._constraint_args.append(con_args)
             self._constraint_kwargs.append(con_kwargs)
@@ -134,6 +138,7 @@ class IpoptProblemWrapper(object):
         self.nfev = 0
         self.njev = 0
         self.nit = 0
+        self._n = n
 
     def evaluate_fun_with_grad(self, x):
         if self.last_x is None or not np.all(self.last_x == x):
@@ -166,7 +171,22 @@ class IpoptProblemWrapper(object):
         con_values = []
         for jac, args in zip(self._constraint_jacs, self._constraint_args):
             con_values.append(jac(x, *args))
-        return np.vstack(con_values)
+        J = np.vstack(con_values)
+        row, col = self.jacobianstructure()
+        return J[row, col]
+
+    def jacobianstructure(self):
+        iRow = []
+        jCol = []
+        for con_no, jac_struct in enumerate(self._constraint_jac_structure):
+            if jac_struct is not None:
+                js = jac_struct()
+                iRow += [con_no,] * len(js)
+                jCol += js
+            else:
+                iRow += [con_no,] * self._n
+                jCol += list(range(self._n))
+        return iRow, jCol
 
     def hessian(self, x, lagrange, obj_factor):
         H = obj_factor * self.obj_hess(x)  # type: ignore
@@ -284,6 +304,7 @@ def minimize_ipopt(fun,
                                   hessp=hessp,
                                   constraints=constraints,
                                   eps=1e-8,
+                                  n=len(_x0),
                                   con_dims=con_dims)
 
     if options is None:
